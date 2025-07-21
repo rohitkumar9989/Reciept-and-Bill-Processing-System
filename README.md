@@ -2,7 +2,7 @@
 
 A powerful data-driven mini-application for uploading, parsing, and analyzing receipts and bills—empowering users to automate data extraction, track spending, and gain financial insights from everyday transactions.
 
-**Contact:** rohitoffficial9989@gmail.com
+**Mail** rohitoffficial9989@gmail.com
 
 ---
 
@@ -132,10 +132,7 @@ A powerful data-driven mini-application for uploading, parsing, and analyzing re
 
 ---
 
-## 📫 Support
-
-For assistance, issues, or feedback, contact:  
-**rohitoffficial9989@gmail.com**
+*This project was made for 8Byte.ai*
 
 ---
 
