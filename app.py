@@ -12,8 +12,8 @@ from nltk.tag import pos_tag
 from nltk.tokenize import word_tokenize
 from datetime import date, datetime
 from pydantic import BaseModel, validator, ValidationError
+from typing import Optional
 
-# Ensure NLTK resources are available for POS tagging.
 try:
     nltk.data.find('tokenizers/punkt')
     nltk.data.find('taggers/averaged_perceptron_tagger')
@@ -21,31 +21,58 @@ except LookupError:
     nltk.download('punkt')
     nltk.download('averaged_perceptron_tagger')
 
-# --- Database setup: store date, item (as product), and amount.
+VENDOR_CATEGORY = {
+    "Amazon": "Shopping",
+    "Walmart": "Groceries",
+    "Starbucks": "Food & Beverage",
+    "Big Bazaar": "Groceries",
+    "Dominos": "Food & Beverage",
+    "Apple": "Electronics",
+    "Samsung": "Electronics",
+    "Flipkart": "Shopping",
+    "Uber": "Transport",
+    "Reliance": "Groceries",
+}
+
+def infer_category(vendor):
+    """
+    Infers expense category from a vendor string using a vendor-category mapping.
+    """
+    for key, value in VENDOR_CATEGORY.items():
+        if key.lower() in vendor.lower():
+            return value
+    return "Other"
+
 conn = sqlite3.connect('receipts.db', check_same_thread=False)
 c = conn.cursor()
-c.execute(
-    "CREATE TABLE IF NOT EXISTS receipts (id INTEGER PRIMARY KEY AUTOINCREMENT, date TEXT, item TEXT, amount REAL)"
-)
+c.execute("""
+    CREATE TABLE IF NOT EXISTS receipts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        date TEXT,
+        item TEXT,
+        amount REAL,
+        category TEXT
+    )
+""")
+try:
+    c.execute("ALTER TABLE receipts ADD COLUMN category TEXT")
+except sqlite3.OperationalError:
+    pass
 conn.commit()
 
-# Initialize OCR reader for image and PDF text extraction.
 reader = easyocr.Reader(['en'])
 
-# Data model for structured receipt fields.
 class ReceiptData(BaseModel):
     """
-    Pydantic model for structured receipt data validation.
+    Structured data model for receipts with validation.
     """
     vendor: str
     date: str
     amount: float
+    category: Optional[str] = None
 
     @validator("date")
     def validate_date(cls, v):
-        """
-        Validates date string format as YYYY-MM-DD.
-        """
         try:
             datetime.strptime(v, "%Y-%m-%d")
         except Exception:
@@ -54,9 +81,6 @@ class ReceiptData(BaseModel):
 
     @validator("amount")
     def check_positive(cls, v):
-        """
-        Ensures amount is present and non-negative.
-        """
         if v is None:
             raise ValueError("Amount cannot be empty")
         if v < 0:
@@ -65,15 +89,13 @@ class ReceiptData(BaseModel):
 
 def extract_text(file):
     """
-    Extract plain text from uploaded file.
-    Supports PDF, JPG, PNG, and TXT.
+    Extracts plain text from filename using OCR for images/PDF and utf-8 for text files.
     """
     if file.name.endswith(".pdf"):
         images = convert_from_path(file.name)
         text = ""
         for img in images:
             img_np = np.array(img)
-            # OCR over each page image
             result = reader.readtext(img_np, detail=0, paragraph=True)
             text += " ".join(result) + " "
         return text
@@ -89,38 +111,34 @@ def extract_text(file):
 
 def parse_receipt_fields(text):
     """
-    Extracts and validates structured fields: vendor, date, amount
-    from the OCR or text file receipt data.
+    Extracts and validates vendor, date, amount, and category fields from the raw receipt text.
+    Returns a ReceiptData object or an error string.
     """
     vendor = None
     date_str = None
     amount = None
 
-    # Extract YYYY-MM-DD or YYYY/MM/DD format.
     m_date = re.search(r'(\d{4}[-/]\d{2}[-/]\d{2})', text)
     if m_date:
         date_str = m_date.group(1).replace('/', '-')
 
-    # Extract common price formats.
     m_amount = re.search(r'(?:Total\s*[:\-]?\s*\$?|Amount\s*[:\-]?\s*\$?|Rs\.?\s*|INR\s*)?(\d+[.,]?\d*)', text, flags=re.IGNORECASE)
     if m_amount:
         amount = float(m_amount.group(1).replace(",", ""))
 
-    # First line as vendor/biller name.
     first_line = text.splitlines()[0]
     vendor = first_line.strip() if first_line else "Unknown"
+    category = infer_category(vendor)
 
-    # Pydantic validation
     try:
-        receipt = ReceiptData(vendor=vendor, date=date_str, amount=amount)
+        receipt = ReceiptData(vendor=vendor, date=date_str, amount=amount, category=category)
         return receipt, None
     except ValidationError as e:
         return None, str(e)
 
 def aggregate_word_clusters(words):
     """
-    Groups related words into item names using POS tagging.
-    This is useful to cluster like 'Apple Juice' as one item.
+    Aggregates a sequence of words into item name clusters using POS tagging.
     """
     if not words:
         return words
@@ -152,8 +170,7 @@ def aggregate_word_clusters(words):
 
 def is_number(s):
     """
-    Utility to robustly check if a string is a number,
-    ignoring commas and common OCR errors.
+    Checks if a string is a number, robust to common OCR issues.
     """
     s = s.replace(",", "").replace("E", "").replace("e", "").replace("O", "0")
     try:
@@ -164,8 +181,7 @@ def is_number(s):
 
 def parse_items_prices(text):
     """
-    Attempts to extract clusters of item names and their associated prices.
-    Returns a dictionary mapping item name to price.
+    Extracts item-price mappings from raw receipt text using word clustering and positional heuristics.
     """
     tokens = deque(text.split())
     raw_items, prices = [], []
@@ -175,7 +191,6 @@ def parse_items_prices(text):
             break
         else:
             raw_items.append(tokens.popleft())
-    # Check if prices follow after items
     while tokens:
         token = tokens.popleft()
         if is_number(token):
@@ -189,7 +204,7 @@ def parse_items_prices(text):
 
 def linear_search(data, keyword):
     """
-    Simple search by item name across uploaded receipts.
+    Searches for keyword in item name fields of uploaded receipts.
     """
     result = []
     for record in data:
@@ -199,7 +214,7 @@ def linear_search(data, keyword):
 
 def quicksort(arr, key):
     """
-    Custom quicksort implementation for sorting dicts by 'amount' field.
+    Sorts a list of dictionaries by the given key using quicksort algorithm.
     """
     if len(arr) <= 1:
         return arr
@@ -210,14 +225,14 @@ def quicksort(arr, key):
 
 def compute_mean(data):
     """
-    Returns mean of a list of values.
+    Returns the mean of the input list.
     """
     if len(data) == 0: return 0
     return sum(data) / len(data)
 
 def compute_median(data):
     """
-    Returns median of a list of values.
+    Returns the median value of the input list.
     """
     if len(data) == 0: return 0
     s = sorted(data)
@@ -229,7 +244,7 @@ def compute_median(data):
 
 def compute_mode(data):
     """
-    Returns mode (most common value) from a list.
+    Returns the most common (mode) value in the input list.
     """
     if len(data) == 0: return 0
     c = Counter(data)
@@ -237,7 +252,7 @@ def compute_mode(data):
 
 def text_reader(file_obj):
     """
-    Parses .txt uploads: expects 'item price' on each line.
+    Reads text file uploads; expects each line as 'item price'.
     """
     content = file_obj.read().decode("utf-8")
     lines = content.splitlines()
@@ -250,7 +265,6 @@ def text_reader(file_obj):
         pairs[product] = pairs.get(product, 0) + price
     return pairs
 
-# --- STREAMLIT APP LOGIC ---
 st.sidebar.title("Receipt Processor")
 page = st.sidebar.radio("Menu", ["Upload", "Database", "Insights"])
 
@@ -258,7 +272,6 @@ if page == "Upload":
     st.title("Upload Receipt")
     f = st.file_uploader("Upload file (.jpg, .png, .pdf, .txt)", type=['jpg', 'png', 'pdf', 'txt'])
     if f:
-        # Extract text contents from file
         if f.name.lower().endswith(".txt"):
             pairs = text_reader(f)
             extracted_text = '\n'.join([f"{k} {v}" for k, v in pairs.items()])
@@ -266,22 +279,30 @@ if page == "Upload":
             extracted_text = extract_text(f)
             pairs = parse_items_prices(extracted_text)
 
-        # Structured field extraction (vendor, date, amount)
         receipt_struct, val_error = parse_receipt_fields(extracted_text)
         st.markdown("### Receipt Summary")
         if receipt_struct:
             st.info(f"Vendor: {receipt_struct.vendor}")
             st.info(f"Date: {receipt_struct.date}")
             st.info(f"Amount: {receipt_struct.amount}")
+            st.info(f"Category: {receipt_struct.category}")
+            receipt_category = receipt_struct.category
         elif val_error:
             st.error(f"Parsing/validation error: {val_error}")
+            receipt_category = "Other"
+        else:
+            receipt_category = "Other"
 
-        # Initialize session state for item-price editing
         st.session_state.edited_pairs = pairs.copy()
         if "edited_pairs" not in st.session_state:
             st.session_state.edited_pairs = pairs.copy()
         df_display = pd.DataFrame([
-            {"No.": idx+1, "Item Name": item, "Price": price}
+            {
+                "No.": idx+1,
+                "Item Name": item,
+                "Price": price,
+                "Category": infer_category(item)
+            }
             for idx, (item, price) in enumerate(st.session_state.edited_pairs.items())
         ])
         st.subheader("Clustered items & prices identified")
@@ -294,6 +315,7 @@ if page == "Upload":
         orig_price = st.session_state.edited_pairs[orig_name]
         new_name = st.text_input("Product name", value=orig_name)
         new_price = st.number_input("Price", value=orig_price, min_value=0.0)
+        new_cat = st.text_input("Category", value=infer_category(orig_name))
         if st.button("Update this row"):
             st.session_state.edited_pairs.pop(orig_name)
             st.session_state.edited_pairs[new_name] = new_price
@@ -301,18 +323,20 @@ if page == "Upload":
         st.subheader("Add missing item")
         new_item = st.text_input("Item name", key="new_item")
         new_price = st.number_input("Price", min_value=0.0, format="%.2f", key="new_price")
+        new_cat = st.text_input("Category", value=infer_category(new_item), key="new_cat")
         if st.button("Add item"):
             if new_item.strip():
                 st.session_state.edited_pairs[new_item.strip()] = new_price
                 st.success(f"Added '{new_item.strip()}': {new_price:.2f}")
             else:
                 st.error("Please enter a valid item name.")
+
         if st.button("Save all to Database"):
             current_date = date.today().isoformat()
             for item, amount in st.session_state.edited_pairs.items():
                 c.execute(
-                    "INSERT INTO receipts (date, item, amount) VALUES (?, ?, ?)",
-                    (current_date, item, amount)
+                    "INSERT INTO receipts (date, item, amount, category) VALUES (?, ?, ?, ?)",
+                    (current_date, item, amount, infer_category(item))
                 )
             conn.commit()
             st.success("All items saved to database!")
@@ -337,13 +361,13 @@ elif page == "Insights":
             st.subheader("Search Items")
             keyword = st.text_input("Search by keyword")
             if keyword:
-                # Returns first found for keyword in item/product
                 found = linear_search(data, keyword)[0]
                 st.write("The item you were searching for:")
                 st.write (f"Id: {found.get('id')}")
                 st.write(f"Product purchased date: {pd.Timestamp(found.get('date')).date()}")
                 st.write(f"Product Name: {found.get('item')}")
                 st.write(f"Price: {found.get('amount')}")
+                st.write(f"Category: {found.get('category') if 'category' in found else ''}")
             st.subheader("Sort by Amount")
             if st.button("Sort Items by Amount"):
                 sorted_items = quicksort(data, 'amount')
@@ -355,10 +379,16 @@ elif page == "Insights":
             st.write(f"Median: {compute_median(amounts):.2f}")
             st.write(f"Mode: {compute_mode(amounts):.2f}")
 
+            st.subheader("Spending by Category")
+            if 'category' in df.columns:
+                cat_summary = df.groupby('category')['amount'].sum().reset_index()
+                st.bar_chart(pd.Series(cat_summary.amount.values, index=cat_summary.category))
+
             st.subheader("Top Items")
             items = [r['item'] for r in data]
             item_counts = Counter(items)
             st.bar_chart(pd.Series(item_counts))
+
             st.subheader("Time-series Expenditure Trends")
             ts = df.groupby(df['date'].dt.date)['amount'].sum().reset_index()
             ts['date'] = pd.to_datetime(ts['date'])
