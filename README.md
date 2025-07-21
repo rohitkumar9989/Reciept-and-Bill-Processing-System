@@ -13,7 +13,7 @@ A powerful data-driven mini-application for uploading, parsing, and analyzing re
 - **Multi-format ingestion:**  
   Upload receipts and bills as `.jpg`, `.jpeg`, `.png`, `.pdf`, or `.txt` files.
 - **Automated extraction:**  
-  Utilizes OCR and NLP to extract item descriptions, amounts, and dates from images, PDFs, or text files.
+  Utilizes OCR and NLP to extract item descriptions, amounts, and dates from images, PDFs, or text files. Implementation of NLTK for proper word clustering.
 - **Robust validation:**  
   Ensures only supported file types are allowed. Implements fail-safe exception handling during parsing and data processing.
 
@@ -88,7 +88,7 @@ A powerful data-driven mini-application for uploading, parsing, and analyzing re
 
 ### 2. Run the App
 
-`streamlit run <your_script_name.py>`
+`streamlit run app.py`
 
 ---
 
@@ -123,13 +123,18 @@ A powerful data-driven mini-application for uploading, parsing, and analyzing re
   PDF extraction relies on the Poppler toolkit via `pdf2image`. Some users may encounter the error  
   `Exception: Unable to get page count. Is poppler installed and in PATH?`  
   when uploading a PDF.  
-  **Solution:** Download and install **Poppler version 24.8** (from the [official Poppler releases](https://github.com/oschwartz10612/poppler-windows/releases/)), and add its `bin` directory to your system's PATH. This resolves wheel install issues and ensures stable PDF parsing.
+  **Solution:** Download and install **Poppler version 24.8**, and add its `bin` directory to your system's PATH. This resolves wheel install issues and ensures stable PDF parsing.
 - **Dependence on OCR/NLP quality:**  
   Extraction accuracy may vary based on receipt clarity or layout; manual correction is included to address this.
 - **Export options:**  
   Additional UI for `.csv`/`.json` export can be enabled with minimal code changes.
 - **Expanded vendor/category support** and analytics possible as future enhancements.
 
+---
+## 📌 Assumptions
+
+- **Receipts and bills are readable:** The uploaded files (images, PDFs, and text) contain clearly printed or typed text, including item descriptions, prices, and dates, making extraction via OCR and rule-based parsing feasible.
+- **English language inputs:** The application is tuned to process receipts and bills primarily in English. Tokenization, OCR, and NLP routines may not be accurate with other languages unless extended.
 ---
 
 *This project was made for 8Byte.ai*
