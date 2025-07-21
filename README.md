@@ -14,6 +14,8 @@ A powerful data-driven mini-application for uploading, parsing, and analyzing re
   Upload receipts and bills as `.jpg`, `.jpeg`, `.png`, `.pdf`, or `.txt` files.
 - **Automated extraction:**  
   Utilizes OCR and NLP to extract item descriptions, amounts, and dates from images, PDFs, or text files. Implementation of NLTK for proper word clustering.
+- **Structured workflow and validation:**  
+  The application follows a robust, structured pipeline—automatically extracting and validating key fields (`vendor`, `date`, and `amount`) using formal data models (Pydantic) to ensure high-quality, reliable data before it reaches the database or analytics layers.
 - **Robust validation:**  
   Ensures only supported file types are allowed. Implements fail-safe exception handling during parsing and data processing.
 
